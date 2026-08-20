@@ -1,0 +1,4 @@
+interface:
+  display_name: "External Agent Event Handoff"
+  short_description: "Dispatch external models and wake the exact Codex thread once"
+  default_prompt: "Use $external-agent-event-handoff dispatch or collect with an explicit thread ID."
