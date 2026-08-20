@@ -47,11 +47,11 @@ Copy-Item -Recurse -Force `
 在 Codex 中使用自然语言即可：
 
 ```text
-事件驱动模式，单次模式，让 Grok 检查这个改动。
+单次模式，让 Grok 检查这个改动。
 ```
 
 ```text
-事件驱动模式，loop，让 Antigravity 修复这个问题；Codex 负责最终审查，直到没有可执行问题。
+loop，让 Antigravity 修复这个问题；Codex 负责最终审查，直到没有可执行问题。
 ```
 
 也可以直接调用 dispatch 脚本：
@@ -138,11 +138,11 @@ Restart Codex or refresh the available Skills. Install and authenticate the prov
 Natural-language examples in Codex:
 
 ```text
-Use event-driven single mode and ask Grok to review this change.
+Use single mode and ask Grok to review this change.
 ```
 
 ```text
-Use event-driven loop mode with Antigravity. Codex should perform the final review and send fixes back until there are no actionable findings.
+Use loop mode with Antigravity. Codex should perform the final review and send fixes back until there are no actionable findings.
 ```
 
 For direct script usage, see the [Chinese command example](#使用示例) or the provider examples in [`SKILL.md`](external-agent-event-handoff/SKILL.md).
