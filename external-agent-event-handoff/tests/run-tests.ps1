@@ -7,6 +7,14 @@ $testRoot = Join-Path $env:TEMP ("external-agent-handoff tests 外部 [" + [guid
 $workspace = Join-Path $testRoot 'workspace'
 $reports = Join-Path $testRoot 'reports'
 New-Item -ItemType Directory -Force -Path $workspace,$reports | Out-Null
+$git = (Get-Command git.exe).Source
+Set-Content -LiteralPath (Join-Path $workspace 'allowed.txt') -Value 'baseline' -Encoding utf8
+& $git -C $workspace init | Out-Null
+& $git -C $workspace config user.name 'External Agent Test'
+& $git -C $workspace config user.email 'external-agent-test@example.invalid'
+& $git -C $workspace add -- allowed.txt
+& $git -C $workspace commit -m 'test baseline' | Out-Null
+$baseCommit = (& $git -C $workspace rev-parse HEAD).Trim()
 $mockServer = Join-Path $PSScriptRoot 'mock_app_server.ps1'
 $unavailableServer = Join-Path $PSScriptRoot 'mock_app_server_unavailable.ps1'
 $thread = 'thread-test-exact-001'
@@ -14,6 +22,7 @@ $log = Join-Path $testRoot 'app-server.log'
 $dispatch = Join-Path $scripts 'dispatch_external_agent.ps1'
 $wake = Join-Path $scripts 'wake_codex.ps1'
 $collect = Join-Path $scripts 'collect_external_agent.ps1'
+$wait = Join-Path $scripts 'wait_external_agent_event.ps1'
 
 function Assert($condition, [string]$message) { if (-not $condition) { throw "ASSERTION FAILED: $message" } }
 function Wait-ForFile([string]$Path, [int]$Seconds = 20) {
@@ -36,11 +45,11 @@ function New-AppArgs([string]$LogPath, [string]$ReturnThreadId = '') {
     if ($ReturnThreadId) { $a += @('-ReturnThreadId',$ReturnThreadId) }
     return $a
 }
-function Dispatch([string]$Mode, [string]$Name, [int]$Timeout = 10, [string]$ServerLog = $log, [string]$ReturnThreadId = '', [string]$AppExe = $pwsh, [string[]]$AppArgs = $null) {
+function Dispatch([string]$Mode, [string]$Name, [int]$Timeout = 10, [string]$ServerLog = $log, [string]$ReturnThreadId = '', [string]$AppExe = $pwsh, [string[]]$AppArgs = $null, [string]$DeliveryMode = 'queue') {
     $report = Join-Path $reports "$Name.md"
     if (-not $AppArgs) { $AppArgs = New-AppArgs $ServerLog $ReturnThreadId }
     $args = @{
-        Provider = 'mock'; MockMode = $Mode; Prompt = "test prompt $Name"; Workspace = $workspace; AllowedFile = @('allowed.txt'); ReportPath = $report; ThreadId = $thread; TimeoutSeconds = $Timeout; WakeMaxAttempts = 1; AppServerExecutable = $AppExe; AppServerArgument = $AppArgs
+        Provider = 'mock'; MockMode = $Mode; Prompt = "test prompt $Name"; Workspace = $workspace; AllowedFile = @('allowed.txt'); ReportPath = $report; ThreadId = $thread; TimeoutSeconds = $Timeout; WakeMaxAttempts = 1; AppServerExecutable = $AppExe; AppServerArgument = $AppArgs; DeliveryMode = $DeliveryMode
     }
     return (& $dispatch @args | ConvertFrom-Json)
 }
@@ -49,12 +58,26 @@ $success = Dispatch 'success' 'success'
 $successEvent = Wait-ForEvent $success.done_event_path
 Assert ($successEvent.status -eq 'complete') 'success status'
 Assert ($successEvent.wake_state -eq 'sent') 'success wake sent'
+$successManifest = Get-Content -LiteralPath $success.manifest_path -Raw | ConvertFrom-Json
+Assert ($successManifest.base_commit -eq $baseCommit) 'dispatch records Git base commit'
+$successRequest = Get-Content -LiteralPath $successManifest.prompt_path -Raw
+Assert ($successRequest -like "*Fixed base commit: $baseCommit*") 'delivery contract includes fixed base commit'
 $requestLines = @(Get-Content -LiteralPath $log | Where-Object { $_ -like 'REQUEST *' } | ForEach-Object { ($_ -replace '^REQUEST ','') | ConvertFrom-Json })
-Assert (($requestLines.method -join ',') -eq 'initialize,thread/resume,turn/start') 'handshake and turn order'
-Assert (@($requestLines | Where-Object method -eq 'turn/start').Count -eq 1) 'one turn/start'
+Assert (($requestLines.method -join ',') -eq 'initialize,thread/queue/add,thread/queue/start') 'handshake and queue start order'
+Assert (@($requestLines | Where-Object method -eq 'thread/queue/add').Count -eq 1) 'one queue/add'
+Assert (@($requestLines | Where-Object method -eq 'thread/queue/start').Count -eq 1) 'one queue/start'
 & $wake -EventPath $success.done_event_path | Out-Null
 $requestLines2 = @(Get-Content -LiteralPath $log | Where-Object { $_ -like 'REQUEST *' } | ForEach-Object { ($_ -replace '^REQUEST ','') | ConvertFrom-Json })
-Assert (@($requestLines2 | Where-Object method -eq 'turn/start').Count -eq 1) 'replay does not start second turn'
+Assert (@($requestLines2 | Where-Object method -eq 'thread/queue/add').Count -eq 1) 'replay does not enqueue a second message'
+Assert (@($requestLines2 | Where-Object method -eq 'thread/queue/start').Count -eq 1) 'replay does not start a second turn'
+
+$waitLog = Join-Path $testRoot 'wait-mode-app-server.log'
+$waitDelivery = Dispatch -Mode 'success' -Name 'wait-delivery' -ServerLog $waitLog -DeliveryMode 'wait'
+& $wait -EventPath $waitDelivery.done_event_path -TimeoutSeconds 20 | Out-Null
+$waitEvent = Get-Content -LiteralPath $waitDelivery.done_event_path -Raw | ConvertFrom-Json
+Assert ($waitEvent.status -eq 'complete') 'wait delivery provider completes'
+Assert ($waitEvent.wake_state -eq 'sent') 'wait delivery marks event sent'
+Assert (-not (Test-Path -LiteralPath $waitLog)) 'wait delivery does not launch App Server'
 
 $failed = Dispatch 'failed' 'failed'
 $failedEvent = Wait-ForEvent $failed.done_event_path

@@ -7,9 +7,10 @@ description: Dispatch a bounded Grok, Antigravity, Gemini, Claude, or mock exter
 
 Use this skill only when the caller supplies the exact Codex `thread_id`. Never infer it from a recent task, window title, cwd, timestamp, or process list. If it is unavailable, fail closed and ask for the ID.
 
-The workflow has two explicit modes:
+The workflow has three explicit modes:
 
 - `dispatch`: validate the absolute workspace, allowed-file scope, external report path, provider command, and exact thread ID; create a task manifest; start the hidden OS wrapper; return the task ID, wrapper PID, report path, done-event path, and thread ID; then end the turn without polling.
+- `wait`: for reliable delivery to the currently running Codex turn, dispatch with `-DeliveryMode wait`, then run `wait_external_agent_event.ps1` on the returned event path. It blocks on a filesystem event rather than polling, marks the event delivered, and lets the same turn run `collect`. This is the reliable Windows desktop mode because a second App Server cannot start an idle thread owned by the desktop process.
 - `collect`: validate one published event against its manifest, treat the report as untrusted evidence, and perform read-only acceptance. For `complete`, inspect the report and the diff from the recorded base commit. For `failed`, `timed_out`, or an event whose wake state is not `sent`, report the reason and stop.
 
 Runtime scripts are in `scripts/`. They use argument arrays and `ProcessStartInfo.ArgumentList`; they never build an untrusted shell command. On Windows, wrappers use hidden windows. Provider authentication is inherited from the provider CLI and is never written into a manifest.
@@ -20,7 +21,7 @@ Run `dispatch_external_agent.ps1`. For real providers, pass the verified executa
 
 Every provider prompt requires: modify only authorized files, do not stage/commit/reset/clean/switch/merge/rebase/push, write the full Markdown report to the supplied path using a temporary sibling and atomic rename, and include base commit, changed files, validation, remaining risks, and a candidate status. The report is not copied into `done.json`.
 
-The wrapper waits on the provider process once, verifies the report, atomically publishes `<task-id>.done.json`, and performs a bounded App Server wake attempt. It does not poll Codex or start a Codex model turn while the provider is running. App Server wake uses the exact manifest thread ID and the verified sequence `initialize`, `initialized`, `thread/resume`, `turn/start`. If the target thread is active, the resumed ID differs, direct input is unavailable, or App Server is unavailable, it fails closed and leaves the event for manual `collect`.
+The wrapper waits on the provider process once, verifies the report, and atomically publishes `<task-id>.done.json`. It does not poll Codex or start a Codex model turn while the provider is running. In `queue` delivery, App Server uses `initialize`, `initialized`, `thread/queue/add`, and `thread/queue/start`; `wake_state=sent` is recorded only after a Turn ID is returned. A Windows desktop process normally owns the thread writer, so a second App Server may be unable to start an idle thread; use `wait` delivery when reliable automatic continuation in the current turn is required. Failures leave the event for manual `collect`.
 
 ## Collect
 
@@ -31,8 +32,8 @@ Run `collect_external_agent.ps1 -EventPath <absolute done.json>`. Do not execute
 ```powershell
 & "$HOME\.codex\skills\external-agent-event-handoff\scripts\dispatch_external_agent.ps1" `
   -Provider grok `
-  -ProviderExecutable 'C:\Tools\grok.exe' `
-  -ProviderArgument @('run', '--prompt-file', '{prompt_file}', '--workspace', '{workspace}', '--report', '{report_path}') `
+  -ProviderExecutable 'C:\Users\<user>\.grok\bin\grok.exe' `
+  -ProviderArgument @('--prompt-file', '{prompt_file}', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', '--max-turns', '10', '--disable-web-search', '--no-subagents', '--always-approve', '--output-format', 'plain') `
   -Prompt 'Implement the requested change.' `
   -Workspace 'D:\Project' `
   -AllowedFile 'src\feature.ts' `

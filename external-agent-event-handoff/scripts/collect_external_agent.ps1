@@ -35,11 +35,14 @@ if ($event.wake_state -ne 'sent') { Write-Warning 'Completion event is not marke
 
 Write-Output '--- read-only scoped diff ---'
 $base = [string]$manifest.base_commit
-$args = @('-C', [string]$event.workspace, 'diff', '--no-ext-diff')
+$args = @('-c', "safe.directory=$([string]$event.workspace)", '-C', [string]$event.workspace, 'diff', '--no-ext-diff')
 if ($base) { $args += $base }
 $args += '--'
 $allowed = @($manifest.allowed_files)
 if ($allowed.Count) { $args += $allowed }
-& git @args 2>$null
-if ($LASTEXITCODE -ne 0) { Write-Warning 'Git diff was unavailable or workspace is not a Git repository.' }
+$git = Get-GitExecutable
+if ($git) {
+    & $git @args 2>$null
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Git diff was unavailable or workspace is not a Git repository.' }
+} else { Write-Warning 'Git executable was unavailable; scoped diff could not be produced.' }
 Write-Output '--- end read-only scoped diff ---'

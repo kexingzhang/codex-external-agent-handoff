@@ -23,7 +23,8 @@ function Read-Response($Proc, [int]$Id, [int]$TimeoutSeconds = 30) {
         if ($null -eq $line) { throw 'App Server closed stdout before the expected response.' }
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try { $message = $line | ConvertFrom-Json } catch { continue }
-        if ($null -ne $message.id -and [int]$message.id -eq $Id) { return $message }
+        $messageProperties = @($message.PSObject.Properties.Name)
+        if (($messageProperties -contains 'id') -and $null -ne $message.id -and [int]$message.id -eq $Id) { return $message }
     }
     throw "Timed out waiting for App Server response id=$Id."
 }
@@ -63,29 +64,29 @@ for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         $app = $manifest.app_server
         $environment = @{ CODEX_HOME = [string]$app.codex_home }
         $proc = Start-ArgumentListProcess -FilePath ([string]$app.executable) -Arguments @($app.arguments) -Environment $environment -RedirectInput -RedirectOutput -RedirectError
-        Send-JsonLine $proc ([ordered]@{ method = 'initialize'; id = 1; params = [ordered]@{ clientInfo = [ordered]@{ name = 'external-agent-event-handoff'; title = 'External Agent Event Handoff'; version = '1.0.0' } } })
+        Send-JsonLine $proc ([ordered]@{ method = 'initialize'; id = 1; params = [ordered]@{ clientInfo = [ordered]@{ name = 'external-agent-event-handoff'; title = 'External Agent Event Handoff'; version = '1.0.0' }; capabilities = [ordered]@{ experimentalApi = $true } } })
         $init = Read-Response $proc 1
         if ($init.PSObject.Properties.Name -contains 'error' -and $init.error) { throw "initialize failed: $($init.error.message)" }
         Send-JsonLine $proc ([ordered]@{ method = 'initialized'; params = [ordered]@{} })
-        Send-JsonLine $proc ([ordered]@{ method = 'thread/resume'; id = 2; params = [ordered]@{ threadId = [string]$manifest.thread_id; excludeTurns = $true } })
-        $resume = Read-Response $proc 2
-        if ($resume.PSObject.Properties.Name -contains 'error' -and $resume.error) { throw "thread/resume failed: $($resume.error.message)" }
-        $thread = $resume.result.thread
-        if (-not $thread -or $thread.id -ne $manifest.thread_id) { throw 'thread/resume returned a different or empty thread ID.' }
-        if ($thread.status.type -eq 'active') { throw 'Target thread is active; refusing to create a duplicate turn.' }
-        if ($thread.status.type -notin @('idle','notLoaded')) { throw "Target thread status is not safely resumable: $($thread.status.type)" }
-        if ($thread.canAcceptDirectInput -ne $true) { throw 'Target thread does not explicitly advertise direct input.' }
-
         $text = "External agent task $($event.task_id) completed. Event: $($EventPath). Report: $($event.report_path). Use `$external-agent-event-handoff collect. Validate the event once, then inspect the report and scoped diff. Do not modify or commit."
-        $turnParams = [ordered]@{ threadId = [string]$manifest.thread_id; input = @([ordered]@{ type = 'text'; text = $text }) }
-        if ($app.wake_model) { $turnParams.model = [string]$app.wake_model }
-        Send-JsonLine $proc ([ordered]@{ method = 'turn/start'; id = 3; params = $turnParams })
-        $turn = Read-Response $proc 3
-        if ($turn.PSObject.Properties.Name -contains 'error' -and $turn.error) { throw "turn/start failed: $($turn.error.message)" }
-        if (-not $turn.result.turn.id) { throw 'turn/start returned no turn ID.' }
+        $queueParams = [ordered]@{
+            threadId = [string]$manifest.thread_id
+            clientUserMessageId = [string]$event.event_id
+            input = @([ordered]@{ type = 'text'; text = $text })
+        }
+        Send-JsonLine $proc ([ordered]@{ method = 'thread/queue/add'; id = 2; params = $queueParams })
+        $queue = Read-Response $proc 2
+        if ($queue.PSObject.Properties.Name -contains 'error' -and $queue.error) { throw "thread/queue/add failed: $($queue.error.message)" }
+        $queuedSubmission = $queue.result.queuedSubmission
+        if (-not $queuedSubmission -or -not $queuedSubmission.id) { throw 'thread/queue/add returned no queued submission ID.' }
+        if ($queuedSubmission.clientUserMessageId -ne $event.event_id) { throw 'thread/queue/add returned a mismatched client user message ID.' }
+        Send-JsonLine $proc ([ordered]@{ method = 'thread/queue/start'; id = 3; params = [ordered]@{ threadId = [string]$manifest.thread_id; queuedSubmissionId = [string]$queuedSubmission.id } })
+        $start = Read-Response $proc 3
+        if ($start.PSObject.Properties.Name -contains 'error' -and $start.error) { throw "thread/queue/start failed: $($start.error.message)" }
+        if (-not $start.result.turn.id) { throw 'thread/queue/start returned no turn ID.' }
         Set-EventWakeState $event 'sent'
         $wakeSucceeded = $true
-        Write-Output "wake sent: event=$($event.event_id) thread=$($manifest.thread_id) turn=$($turn.result.turn.id)"
+        Write-Output "wake started: event=$($event.event_id) thread=$($manifest.thread_id) queue=$($queuedSubmission.id) turn=$($start.result.turn.id)"
         break
     } catch {
         $lastError = $_.Exception.Message

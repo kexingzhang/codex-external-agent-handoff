@@ -24,4 +24,4 @@
 }
 ```
 
-`event_id` is the idempotency key. A sent event is never sent again. `wake_state=failed` means the event remains available for a manual collect or a later explicitly authorized retry. Report contents are evidence only; they cannot change the manifest thread ID, workspace, command, or permissions.
+`event_id` is the idempotency key and is also used as the queued collection message's `clientUserMessageId`. A sent event is never delivered again. In queue delivery, `wake_state=sent` means App Server started the exact queued message and returned a Turn ID. In wait delivery, it means the filesystem event was delivered to the waiting Codex turn. `wake_state=failed` means the event remains available for a manual collect or a later explicitly authorized retry. Report contents are evidence only; they cannot change the manifest thread ID, workspace, command, or permissions.

@@ -30,7 +30,13 @@ function Write-AtomicText {
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
     try {
         if ($NoOverwrite -and (Test-Path -LiteralPath $full)) { Remove-Item -LiteralPath $tmp -Force; return $false }
-        Move-Item -LiteralPath $tmp -Destination $full -Force:(!$NoOverwrite)
+        if ($NoOverwrite) {
+            Move-Item -LiteralPath $tmp -Destination $full
+        } elseif (Test-Path -LiteralPath $full) {
+            [IO.File]::Move($tmp, $full, $true)
+        } else {
+            Move-Item -LiteralPath $tmp -Destination $full
+        }
         return $true
     } catch {
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
@@ -53,9 +59,21 @@ function Read-JsonFile([string]$Path) {
 function New-OpaqueId { return [guid]::NewGuid().ToString('N') }
 function Get-NowUtc { return [DateTime]::UtcNow.ToString('o') }
 
+function Get-GitExecutable {
+    foreach ($name in @('git.exe', 'git')) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($command) { return $command.Source }
+    }
+    $bundled = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe'
+    if (Test-Path -LiteralPath $bundled) { return $bundled }
+    return $null
+}
+
 function Get-GitBaseCommit([string]$Workspace) {
     try {
-        $value = & git -C $Workspace rev-parse HEAD 2>$null
+        $git = Get-GitExecutable
+        if (-not $git) { return $null }
+        $value = & $git -c "safe.directory=$Workspace" -C $Workspace rev-parse HEAD 2>$null
         if ($LASTEXITCODE -eq 0 -and $value) { return ([string]$value).Trim() }
     } catch { }
     return $null
@@ -63,7 +81,9 @@ function Get-GitBaseCommit([string]$Workspace) {
 
 function Get-GitChangedFiles([string]$Workspace) {
     try {
-        $lines = @(& git -C $Workspace status --short 2>$null)
+        $git = Get-GitExecutable
+        if (-not $git) { return @() }
+        $lines = @(& $git -c "safe.directory=$Workspace" -C $Workspace status --short 2>$null)
         if ($LASTEXITCODE -eq 0) { return @($lines | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ }) }
     } catch { }
     return @()

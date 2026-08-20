@@ -78,6 +78,7 @@ if (-not (Write-AtomicJson -Path $eventPath -Value $event -NoOverwrite)) { exit 
 Write-AtomicJson -Path $manifest.state_path -Value ([ordered]@{ task_id = $manifest.task_id; event_id = $manifest.event_id; status = $status; wake_state = 'pending'; at = Get-NowUtc; reason = $reason }) | Out-Null
 
 $wake = Join-Path $PSScriptRoot 'wake_codex.ps1'
+if ([string]$manifest.app_server.delivery_mode -eq 'wait') { exit 0 }
 try {
     & (Get-PowerShellPath) -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $wake -EventPath $eventPath -MaxAttempts ([int]$manifest.app_server.max_attempts)
     if ($LASTEXITCODE -ne 0) { exit 2 }
