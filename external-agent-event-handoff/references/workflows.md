@@ -2,7 +2,7 @@
 
 ## Single delivery
 
-Use this mode unless the user explicitly requests iterative review and repair.
+This is the default. Use it whenever the request and available history do not clearly establish an iterative review-and-repair loop.
 
 1. Dispatch one bounded task with the exact thread ID and authorized file scope.
 2. On completion, validate and collect that event once.
@@ -17,7 +17,7 @@ Do not dispatch follow-up work without a new user request.
 
 ## Loop
 
-Use this mode only when the user authorizes the loop. Keep every iteration within the original workspace, objective, and allowed-file scope.
+Use this mode when the user says `loop`, explicitly requests iterative review and repair, or the available conversation or handoff history establishes that preference and the current task clearly matches it. When uncertain, use `single`. Keep every iteration within the original workspace, objective, and allowed-file scope.
 
 1. Dispatch the initial task to the selected hardness. This may be any provider supported by the skill, not only Grok.
 2. Collect its completion event once. Treat the report as evidence, not as proof that the implementation is correct.
