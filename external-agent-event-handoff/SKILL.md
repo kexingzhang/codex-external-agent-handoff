@@ -1,13 +1,20 @@
 ---
 name: external-agent-event-handoff
-description: Dispatch a bounded Grok, Antigravity, Gemini, Claude, or mock external-agent task and resume the exact Codex thread once, using an atomic completion event. Use when the user asks to hand work to an external model, use event-driven delivery, or wake Codex automatically after external work; do not use for ordinary delegation without an explicit thread ID.
+description: Dispatch a bounded Grok, Antigravity, Gemini, Claude, or mock external-agent task and resume the exact Codex thread using an atomic completion event. Supports one-shot delivery and Codex-reviewed external-agent loops. Use when the user asks to hand work to an external model, use event-driven delivery, or iterate between Codex review and external fixes; do not use without an explicit thread ID.
 ---
 
 # External agent event handoff
 
 Use this skill only when the caller supplies the exact Codex `thread_id`. Never infer it from a recent task, window title, cwd, timestamp, or process list. If it is unavailable, fail closed and ask for the ID.
 
-The workflow has three explicit modes:
+Choose the orchestration mode from the user's request:
+
+- `single` (default): dispatch once, collect once, then tell the user that the external agent finished and summarize its change report. Do not start another external task merely because the report mentions risks or possible follow-up work.
+- `loop`: use only when the user explicitly asks Codex to review a hardness's changes and send findings back for repair, or asks to repeat until review passes. The hardness may be Grok, Antigravity, Gemini, Claude, or another provider supported by this skill. After each completion, Codex independently reviews the scoped diff and validation evidence. If actionable in-scope findings remain, dispatch a new repair task containing those findings, collect it, and review again. Finish when Codex finds no actionable issues.
+
+Read [references/workflows.md](references/workflows.md) before running `single` or `loop`. The event transport remains one-shot: every dispatch has its own task/event ID and is collected at most once. A review loop is a sequence of one-shot handoffs, not repeated delivery of one event.
+
+The transport has three explicit operations:
 
 - `dispatch`: validate the absolute workspace, allowed-file scope, external report path, provider command, and exact thread ID; create a task manifest; start the hidden OS wrapper; return the task ID, wrapper PID, report path, done-event path, and thread ID; then end the turn without polling.
 - `wait`: for reliable delivery to the currently running Codex turn, dispatch with `-DeliveryMode wait`, then run `wait_external_agent_event.ps1` on the returned event path. It blocks on a filesystem event rather than polling, marks the event delivered, and lets the same turn run `collect`. This is the reliable Windows desktop mode because a second App Server cannot start an idle thread owned by the desktop process.
