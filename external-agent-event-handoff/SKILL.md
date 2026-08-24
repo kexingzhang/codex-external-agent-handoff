@@ -30,7 +30,7 @@ Runtime scripts are in `scripts/`. They use argument arrays and `ProcessStartInf
 & "$HOME\.codex\skills\external-agent-event-handoff\scripts\resolve_thread_id.ps1"
 ```
 
-Show the `thread_id` to the user and obtain explicit confirmation. If multiple windows are returned, ask the user to choose the exact ID. No dispatch may start until confirmation is recorded with `-ConfirmThreadId`.
+The output includes the resolved `thread_id`, task `title`, and task `summary` from the thread metadata. Show that summary to the user and obtain explicit confirmation. If multiple windows are returned, ask the user to choose the exact ID. No dispatch may start until confirmation is recorded with `-ConfirmThreadId`.
 
 ## Dispatch
 

@@ -41,10 +41,12 @@ function Wait-ForEvent([string]$Path, [int]$Seconds = 20) {
     }
     throw "Timed out waiting for completed event $Path"
 }
-function New-AppArgs([string]$LogPath, [string]$ReturnThreadId = '', [string[]]$LoadedThreadIds = @()) {
+function New-AppArgs([string]$LogPath, [string]$ReturnThreadId = '', [string[]]$LoadedThreadIds = @(), [string]$ThreadName = '', [string]$ThreadPreview = '') {
     $a = @('-NoProfile','-NonInteractive','-File',$mockServer,'-LogPath',$LogPath)
     if ($ReturnThreadId) { $a += @('-ReturnThreadId',$ReturnThreadId) }
     if ($LoadedThreadIds.Count) { $a += @('-LoadedThreadIds', ($LoadedThreadIds -join ',')) }
+    if ($ThreadName) { $a += @('-ThreadName',$ThreadName) }
+    if ($ThreadPreview) { $a += @('-ThreadPreview',$ThreadPreview) }
     return $a
 }
 function Dispatch([string]$Mode, [string]$Name, [int]$Timeout = 10, [string]$ServerLog = $log, [string]$ReturnThreadId = '', [string]$AppExe = $pwsh, [string[]]$AppArgs = $null, [string]$DeliveryMode = 'queue') {
@@ -59,9 +61,11 @@ function Dispatch([string]$Mode, [string]$Name, [int]$Timeout = 10, [string]$Ser
 # Thread resolution: environment source is preferred and single match is returned.
 $env:CODEX_THREAD_ID = $thread
 $env:CODEX_SESSION_ID = $thread
-$resolved = & $resolve -AppServerExecutable $pwsh -AppServerArgument (New-AppArgs (Join-Path $testRoot 'resolve.log')) -CodexHome 'mock' | ConvertFrom-Json
+$resolved = & $resolve -AppServerExecutable $pwsh -AppServerArgument (New-AppArgs (Join-Path $testRoot 'resolve.log') '' @() 'Thread title' 'Task preview: implement handoff') -CodexHome 'mock' | ConvertFrom-Json
 Assert ($resolved.source -eq 'environment') 'environment thread source preferred'
 Assert ($resolved.thread_id -eq $thread) 'environment thread ID resolved'
+Assert ($resolved.title -eq 'Thread title') 'resolver includes thread title'
+Assert ($resolved.summary -eq 'Task preview: implement handoff') 'resolver includes thread summary'
 
 # Dispatch can auto-resolve from environment while still requiring confirmation.
 $autoDispatchReport = Join-Path $reports 'auto-resolve.md'

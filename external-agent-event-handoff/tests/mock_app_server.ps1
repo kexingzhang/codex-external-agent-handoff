@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$LogPath,[string]$ReturnThreadId,[string[]]$LoadedThreadIds=@())
+param([Parameter(Mandatory)][string]$LogPath,[string]$ReturnThreadId,[string[]]$LoadedThreadIds=@(),[string]$ThreadName,[string]$ThreadPreview)
 Set-StrictMode -Version Latest
 $logParent = Split-Path -Parent $LogPath
 if (-not (Test-Path -LiteralPath $logParent)) { New-Item -ItemType Directory -Path $logParent -Force | Out-Null }
@@ -24,6 +24,10 @@ while ($line = [Console]::In.ReadLine()) {
         'initialized' { }
         'thread/loaded/list' {
             Emit ([ordered]@{ id = $request.id; result = [ordered]@{ data = @($LoadedThreadIds) } })
+        }
+        'thread/read' {
+            $threadId = [string]$request.params.threadId
+            Emit ([ordered]@{ id = $request.id; result = [ordered]@{ thread = [ordered]@{ id = $threadId; name = $ThreadName; preview = $ThreadPreview; cwd = 'test'; createdAt = 0; updatedAt = 0; sessionId = $threadId; ephemeral = $false; modelProvider = 'mock'; source = 'appServer'; status = [ordered]@{ type = 'idle' }; turns = 0; cliVersion = 'mock-1' } } })
         }
         'thread/resume' {
             Emit ([ordered]@{ id = $request.id; error = [ordered]@{ code = -32000; message = 'thread already has an active writer' } })

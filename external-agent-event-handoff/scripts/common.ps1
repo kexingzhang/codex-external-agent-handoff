@@ -141,7 +141,8 @@ function Get-ThreadCandidatesFromAppServer {
     if ($CodexHome) { $environment.CODEX_HOME = $CodexHome }
     $proc = $null
     try {
-        $proc = Start-ArgumentListProcess -FilePath $Executable -Arguments $Arguments -Environment $environment -RedirectInput -RedirectOutput -RedirectError
+        $effectiveArguments = if ($null -eq $Arguments) { @() } else { @($Arguments) }
+        $proc = Start-ArgumentListProcess -FilePath $Executable -Arguments $effectiveArguments -Environment $environment -RedirectInput -RedirectOutput -RedirectError
         Send-JsonLine $proc ([ordered]@{ method = 'initialize'; id = 1; params = [ordered]@{ clientInfo = [ordered]@{ name = 'external-agent-event-handoff'; title = 'External Agent Event Handoff'; version = '1.0.0' }; capabilities = [ordered]@{ experimentalApi = $true } } })
         $init = Read-Response $proc 1 10
         if ($init.PSObject.Properties.Name -contains 'error' -and $init.error) { throw "initialize failed: $($init.error.message)" }
@@ -158,6 +159,32 @@ function Get-ThreadCandidatesFromAppServer {
             return @($list.result.data | ForEach-Object { if ($_.id) { [string]$_.id } } | Where-Object { $_ })
         }
         return @()
+    } finally {
+        if ($proc) { try { $proc.StandardInput.Close() } catch { }; try { $proc.Dispose() } catch { } }
+    }
+}
+
+function Get-ThreadSummary {
+    param([Parameter(Mandatory)][string]$Executable, [Parameter(Mandatory)][string]$ThreadId, [string[]]$Arguments, [string]$CodexHome)
+    # Read-only metadata lookup: title/name plus the first user message preview.
+    $environment = @{}
+    if ($CodexHome) { $environment.CODEX_HOME = $CodexHome }
+    $proc = $null
+    try {
+        $effectiveArguments = if ($null -eq $Arguments) { @() } else { @($Arguments) }
+        $proc = Start-ArgumentListProcess -FilePath $Executable -Arguments $effectiveArguments -Environment $environment -RedirectInput -RedirectOutput -RedirectError
+        Send-JsonLine $proc ([ordered]@{ method = 'initialize'; id = 1; params = [ordered]@{ clientInfo = [ordered]@{ name = 'external-agent-event-handoff'; title = 'External Agent Event Handoff'; version = '1.0.0' }; capabilities = [ordered]@{ experimentalApi = $true } } })
+        $init = Read-Response $proc 1 10
+        if ($init.PSObject.Properties.Name -contains 'error' -and $init.error) { throw "initialize failed: $($init.error.message)" }
+        Send-JsonLine $proc ([ordered]@{ method = 'initialized'; params = [ordered]@{} })
+        Send-JsonLine $proc ([ordered]@{ method = 'thread/read'; id = 2; params = [ordered]@{ threadId = $ThreadId } })
+        $read = Read-Response $proc 2 10
+        if ($read.PSObject.Properties.Name -contains 'error' -and $read.error) { throw "thread/read failed: $($read.error.message)" }
+        $thread = $read.result.thread
+        if (-not $thread -or -not $thread.id) { throw "thread/read returned no thread data for $ThreadId" }
+        $name = if ($thread.name) { [string]$thread.name } elseif ($thread.PSObject.Properties.Name -contains 'title' -and $thread.title) { [string]$thread.title } else { '' }
+        $preview = if ($thread.preview) { [string]$thread.preview } else { '' }
+        return [pscustomobject]@{ id = [string]$thread.id; name = $name; preview = $preview }
     } finally {
         if ($proc) { try { $proc.StandardInput.Close() } catch { }; try { $proc.Dispose() } catch { } }
     }

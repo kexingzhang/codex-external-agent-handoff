@@ -23,7 +23,7 @@ Event-driven handoffs between Codex and external AI coding agents (“hardnesses
 
 - 支持 Grok、Antigravity、Gemini、Claude 和本地 mock provider。
 - 使用临时文件加原子重命名发布 `done.json`，避免读取半成品事件。
-- 自动解析当前 Codex 窗口的 `thread_id`，优先对话环境，回退到 App Server 已加载会话；解析结果必须由用户确认后才 dispatch。
+- 自动解析当前 Codex 窗口的 `thread_id`，并提供任务标题和摘要；解析结果必须由用户确认后才 dispatch。
 - 外部代理只能修改显式授权的文件范围。
 - 外部报告视为不可信证据；最终验收由 Codex 完成。
 - `collect` 只读检查报告、事件、manifest 和限定范围内的 Git diff。
