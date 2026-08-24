@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory)][string]$Workspace,
     [string[]]$AllowedFile = @(),
     [Parameter(Mandatory)][string]$ReportPath,
-    [Parameter(Mandatory)][string]$ThreadId,
+    [string]$ThreadId,
+    [string]$ConfirmThreadId,
     [string]$ProviderExecutable,
     [string[]]$ProviderArgument = @(),
     [ValidateRange(1,604800)][int]$TimeoutSeconds = 3600,
@@ -22,7 +23,17 @@ param(
 
 . (Join-Path $PSScriptRoot 'common.ps1')
 
-if ([string]::IsNullOrWhiteSpace($ThreadId)) { throw 'An exact thread ID is mandatory; refusing to infer one.' }
+$autoResolvedThreadId = Get-ThreadIdFromEnvironment
+if (-not $ThreadId -and $autoResolvedThreadId) { $ThreadId = [string]$autoResolvedThreadId }
+if ([string]::IsNullOrWhiteSpace($ThreadId)) { throw 'Thread ID was not supplied and could not be resolved from the conversation environment. Use resolve_thread_id.ps1 or pass -ThreadId.' }
+$resolvedThreadId = ([string]$ThreadId).Trim()
+if ($autoResolvedThreadId -and $resolvedThreadId -ne ([string]$autoResolvedThreadId).Trim()) {
+    throw "Resolved thread $autoResolvedThreadId does not match supplied thread $resolvedThreadId; refusing to reuse a session for the wrong window."
+}
+$confirmedThreadId = ([string]$ConfirmThreadId).Trim()
+if ([string]::IsNullOrWhiteSpace($confirmedThreadId) -or $confirmedThreadId -ne $resolvedThreadId) {
+    throw 'The resolved thread ID requires explicit user confirmation. Run resolve_thread_id.ps1, show the user the exact ID, then pass -ConfirmThreadId with that exact value.'
+}
 $workspaceFull = Resolve-AbsolutePath $Workspace -MustExist
 $workspaceFull = (Get-Item -LiteralPath $workspaceFull).FullName
 $reportFull = Resolve-AbsolutePath $ReportPath

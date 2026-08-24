@@ -99,6 +99,70 @@ function Get-PowerShellPath {
     throw 'No PowerShell executable is available.'
 }
 
+function Send-JsonLine($Proc, $Value) {
+    $Proc.StandardInput.WriteLine(($Value | ConvertTo-Json -Depth 30 -Compress))
+    $Proc.StandardInput.Flush()
+}
+function Read-Response($Proc, [int]$Id, [int]$TimeoutSeconds = 30) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $task = $Proc.StandardOutput.ReadLineAsync()
+        while (-not $task.IsCompleted) {
+            if ($Proc.HasExited) { throw "App Server exited before response id=$Id." }
+            $remaining = [Math]::Max(1, [int]([TimeSpan]($deadline - [DateTime]::UtcNow)).TotalMilliseconds)
+            [void]$task.Wait([Math]::Min(1000, $remaining))
+            if ([DateTime]::UtcNow -ge $deadline) { throw "Timed out waiting for App Server response id=$Id." }
+        }
+        $line = $task.GetAwaiter().GetResult()
+        if ($null -eq $line) { throw 'App Server closed stdout before the expected response.' }
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        try { $message = $line | ConvertFrom-Json } catch { continue }
+        $messageProperties = @($message.PSObject.Properties.Name)
+        if (($messageProperties -contains 'id') -and $null -ne $message.id -and [int]$message.id -eq $Id) { return $message }
+    }
+    throw "Timed out waiting for App Server response id=$Id."
+}
+
+function Get-ThreadIdFromEnvironment {
+    # Codex Desktop runs expose the current window/thread ID directly. This is the
+    # preferred source because it does not require App Server discovery.
+    foreach ($name in @('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_ACTIVE_THREAD_ID')) {
+        $value = [string]([Environment]::GetEnvironmentVariable($name))
+        if (-not [string]::IsNullOrWhiteSpace($value)) { return $value.Trim() }
+    }
+    return $null
+}
+
+function Get-ThreadCandidatesFromAppServer {
+    param([Parameter(Mandatory)][string]$Executable, [string[]]$Arguments = @(), [string]$CodexHome)
+    # Thread discovery is read-only. The server is consulted only when an explicit
+    # environment source is unavailable or when a candidate must be validated.
+    $environment = @{}
+    if ($CodexHome) { $environment.CODEX_HOME = $CodexHome }
+    $proc = $null
+    try {
+        $proc = Start-ArgumentListProcess -FilePath $Executable -Arguments $Arguments -Environment $environment -RedirectInput -RedirectOutput -RedirectError
+        Send-JsonLine $proc ([ordered]@{ method = 'initialize'; id = 1; params = [ordered]@{ clientInfo = [ordered]@{ name = 'external-agent-event-handoff'; title = 'External Agent Event Handoff'; version = '1.0.0' }; capabilities = [ordered]@{ experimentalApi = $true } } })
+        $init = Read-Response $proc 1 10
+        if ($init.PSObject.Properties.Name -contains 'error' -and $init.error) { throw "initialize failed: $($init.error.message)" }
+        Send-JsonLine $proc ([ordered]@{ method = 'initialized'; params = [ordered]@{} })
+        # Ask only for loaded sessions first; they are the current interactive windows.
+        Send-JsonLine $proc ([ordered]@{ method = 'thread/loaded/list'; id = 2; params = [ordered]@{} })
+        $loaded = Read-Response $proc 2 10
+        if ($loaded.PSObject.Properties.Name -contains 'error' -and $loaded.error) { throw "thread/loaded/list failed: $($loaded.error.message)" }
+        if ($loaded.result -and $null -ne $loaded.result.data) { return @($loaded.result.data | ForEach-Object { [string]$_ } | Where-Object { $_ }) }
+        Send-JsonLine $proc ([ordered]@{ method = 'thread/list'; id = 2; params = [ordered]@{ limit = 20; sortKey = 'recency_at'; sortDirection = 'desc' } })
+        $list = Read-Response $proc 2 10
+        if ($list.PSObject.Properties.Name -contains 'error' -and $list.error) { throw "thread/list failed: $($list.error.message)" }
+        if ($list.result -and $null -ne $list.result.data) {
+            return @($list.result.data | ForEach-Object { if ($_.id) { [string]$_.id } } | Where-Object { $_ })
+        }
+        return @()
+    } finally {
+        if ($proc) { try { $proc.StandardInput.Close() } catch { }; try { $proc.Dispose() } catch { } }
+    }
+}
+
 function Assert-NoCredentialLiterals([string[]]$Arguments) {
     foreach ($arg in @($Arguments)) {
         if ([string]$arg -match '(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|bearer)\s*[:=]') {

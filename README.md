@@ -23,7 +23,7 @@ Event-driven handoffs between Codex and external AI coding agents (“hardnesses
 
 - 支持 Grok、Antigravity、Gemini、Claude 和本地 mock provider。
 - 使用临时文件加原子重命名发布 `done.json`，避免读取半成品事件。
-- 要求精确的 Codex `thread_id`，不会根据窗口、目录或进程猜测。
+- 自动解析当前 Codex 窗口的 `thread_id`，优先对话环境，回退到 App Server 已加载会话；解析结果必须由用户确认后才 dispatch。
 - 外部代理只能修改显式授权的文件范围。
 - 外部报告视为不可信证据；最终验收由 Codex 完成。
 - `collect` 只读检查报告、事件、manifest 和限定范围内的 Git diff。
@@ -74,7 +74,8 @@ loop，让 Antigravity 修复这个问题；Codex 负责最终审查，直到没
   -Workspace 'D:\Project' `
   -AllowedFile 'src\feature.ts' `
   -ReportPath 'D:\reports\feature.md' `
-  -ThreadId '<exact-thread-id>' `
+  -ThreadId '<resolved-thread-id>'
+  -ConfirmThreadId '<user-confirmed-thread-id>' `
   -DeliveryMode wait
 ```
 

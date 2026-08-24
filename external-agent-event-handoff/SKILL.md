@@ -5,7 +5,9 @@ description: Dispatch a bounded Grok, Antigravity, Gemini, Claude, or mock exter
 
 # External agent event handoff
 
-Use this skill only when the caller supplies the exact Codex `thread_id`. Never infer it from a recent task, window title, cwd, timestamp, or process list. If it is unavailable, fail closed and ask for the ID.
+## Thread identity
+
+The skill resolves the current Codex window thread ID automatically, preferring the conversation environment (`CODEX_THREAD_ID`) and falling back to loaded App Server sessions. It never guesses from a recent task, title, cwd, timestamp, or process list. The resolved ID must be shown to the user and explicitly confirmed before dispatch; dispatch refuses to start when `-ConfirmThreadId` does not exactly match the resolved ID.
 
 Choose the orchestration mode from the user's request:
 
@@ -21,6 +23,14 @@ The transport has three explicit operations:
 - `collect`: validate one published event against its manifest, treat the report as untrusted evidence, and perform read-only acceptance. For `complete`, inspect the report and the diff from the recorded base commit. For `failed`, `timed_out`, or an event whose wake state is not `sent`, report the reason and stop.
 
 Runtime scripts are in `scripts/`. They use argument arrays and `ProcessStartInfo.ArgumentList`; they never build an untrusted shell command. On Windows, wrappers use hidden windows. Provider authentication is inherited from the provider CLI and is never written into a manifest.
+
+## Resolve And Confirm
+
+```powershell
+& "$HOME\.codex\skills\external-agent-event-handoff\scripts\resolve_thread_id.ps1"
+```
+
+Show the `thread_id` to the user and obtain explicit confirmation. If multiple windows are returned, ask the user to choose the exact ID. No dispatch may start until confirmation is recorded with `-ConfirmThreadId`.
 
 ## Dispatch
 
@@ -45,7 +55,8 @@ Run `collect_external_agent.ps1 -EventPath <absolute done.json>`. Do not execute
   -Workspace 'D:\Project' `
   -AllowedFile 'src\feature.ts' `
   -ReportPath 'D:\Project-reports\task.md' `
-  -ThreadId '0190...exact-thread-id...'
+  -ThreadId '0190...resolved-thread-id...' `
+  -ConfirmThreadId '0190...user-confirmed-thread-id...'
 ```
 
 For the locally installed Antigravity CLI (`agy`), use print mode and pass the delivery request as one argument:
@@ -59,7 +70,8 @@ For the locally installed Antigravity CLI (`agy`), use print mode and pass the d
   -Workspace 'D:\Project' `
   -AllowedFile 'src\feature.ts' `
   -ReportPath 'D:\Project-reports\task.md' `
-  -ThreadId '0190...exact-thread-id...'
+  -ThreadId '0190...resolved-thread-id...' `
+  -ConfirmThreadId '0190...user-confirmed-thread-id...'
 ```
 
 ```powershell

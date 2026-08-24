@@ -22,6 +22,7 @@ $log = Join-Path $testRoot 'app-server.log'
 $dispatch = Join-Path $scripts 'dispatch_external_agent.ps1'
 $wake = Join-Path $scripts 'wake_codex.ps1'
 $collect = Join-Path $scripts 'collect_external_agent.ps1'
+$resolve = Join-Path $scripts 'resolve_thread_id.ps1'
 $wait = Join-Path $scripts 'wait_external_agent_event.ps1'
 
 function Assert($condition, [string]$message) { if (-not $condition) { throw "ASSERTION FAILED: $message" } }
@@ -40,19 +41,68 @@ function Wait-ForEvent([string]$Path, [int]$Seconds = 20) {
     }
     throw "Timed out waiting for completed event $Path"
 }
-function New-AppArgs([string]$LogPath, [string]$ReturnThreadId = '') {
+function New-AppArgs([string]$LogPath, [string]$ReturnThreadId = '', [string[]]$LoadedThreadIds = @()) {
     $a = @('-NoProfile','-NonInteractive','-File',$mockServer,'-LogPath',$LogPath)
     if ($ReturnThreadId) { $a += @('-ReturnThreadId',$ReturnThreadId) }
+    if ($LoadedThreadIds.Count) { $a += @('-LoadedThreadIds', ($LoadedThreadIds -join ',')) }
     return $a
 }
 function Dispatch([string]$Mode, [string]$Name, [int]$Timeout = 10, [string]$ServerLog = $log, [string]$ReturnThreadId = '', [string]$AppExe = $pwsh, [string[]]$AppArgs = $null, [string]$DeliveryMode = 'queue') {
     $report = Join-Path $reports "$Name.md"
     if (-not $AppArgs) { $AppArgs = New-AppArgs $ServerLog $ReturnThreadId }
     $args = @{
-        Provider = 'mock'; MockMode = $Mode; Prompt = "test prompt $Name"; Workspace = $workspace; AllowedFile = @('allowed.txt'); ReportPath = $report; ThreadId = $thread; TimeoutSeconds = $Timeout; WakeMaxAttempts = 1; AppServerExecutable = $AppExe; AppServerArgument = $AppArgs; DeliveryMode = $DeliveryMode
+        Provider = 'mock'; MockMode = $Mode; Prompt = "test prompt $Name"; Workspace = $workspace; AllowedFile = @('allowed.txt'); ReportPath = $report; ThreadId = $thread; ConfirmThreadId = $thread; TimeoutSeconds = $Timeout; WakeMaxAttempts = 1; AppServerExecutable = $AppExe; AppServerArgument = $AppArgs; DeliveryMode = $DeliveryMode
     }
     return (& $dispatch @args | ConvertFrom-Json)
 }
+
+# Thread resolution: environment source is preferred and single match is returned.
+$env:CODEX_THREAD_ID = $thread
+$env:CODEX_SESSION_ID = $thread
+$resolved = & $resolve -AppServerExecutable $pwsh -AppServerArgument (New-AppArgs (Join-Path $testRoot 'resolve.log')) -CodexHome 'mock' | ConvertFrom-Json
+Assert ($resolved.source -eq 'environment') 'environment thread source preferred'
+Assert ($resolved.thread_id -eq $thread) 'environment thread ID resolved'
+
+# Dispatch can auto-resolve from environment while still requiring confirmation.
+$autoDispatchReport = Join-Path $reports 'auto-resolve.md'
+$autoArgs = @{
+    Provider = 'mock'; MockMode = 'success'; Prompt = 'test prompt auto-resolve'; Workspace = $workspace; AllowedFile = @('allowed.txt'); ReportPath = $autoDispatchReport; ConfirmThreadId = $thread; TimeoutSeconds = 5; WakeMaxAttempts = 1; AppServerExecutable = $pwsh; AppServerArgument = (New-AppArgs (Join-Path $testRoot 'auto-resolve.log')); DeliveryMode = 'queue'
+}
+$autoDispatch = & $dispatch @autoArgs | ConvertFrom-Json
+$autoEvent = Wait-ForEvent $autoDispatch.done_event_path
+Assert ($autoEvent.status -eq 'complete') 'auto-resolved dispatch completes'
+# Dispatch refuses when the user confirms a thread that differs from the active environment.
+$env:CODEX_THREAD_ID = $thread
+$mismatchDispatch = $false
+try {
+    $mismatchReport = Join-Path $reports 'env-mismatch.md'
+    $mismatchArgs = @{
+        Provider = 'mock'; MockMode = 'success'; Prompt = 'test prompt env-mismatch'; Workspace = $workspace; AllowedFile = @('allowed.txt'); ReportPath = $mismatchReport; ThreadId = 'thread-other-window'; ConfirmThreadId = 'thread-other-window'; TimeoutSeconds = 5; WakeMaxAttempts = 1; AppServerExecutable = $pwsh; AppServerArgument = (New-AppArgs (Join-Path $testRoot 'env-mismatch.log')); DeliveryMode = 'queue'
+    }
+    $mismatchResult = & $dispatch @mismatchArgs | ConvertFrom-Json
+    $mismatchDispatch = $true
+} catch { }
+Assert (-not $mismatchDispatch) 'dispatch refuses active-window mismatch'
+
+Remove-Item Env:CODEX_THREAD_ID -ErrorAction SilentlyContinue
+Remove-Item Env:CODEX_SESSION_ID -ErrorAction SilentlyContinue
+
+# App Server fallback resolves a single loaded thread when environment is absent.
+$resolvedFallback = & $resolve -AppServerExecutable $pwsh -AppServerArgument (New-AppArgs (Join-Path $testRoot 'resolve-fallback.log') '' @($thread)) -CodexHome 'mock' -PreferAppServer | ConvertFrom-Json
+Assert ($resolvedFallback.source -eq 'app-server') 'app-server fallback source'
+Assert ($resolvedFallback.thread_id -eq $thread) 'app-server single candidate resolved'
+
+# Dispatch must not start without matching explicit confirmation.
+$dispatchedWithoutConfirm = $false
+try {
+    $noConfirmReport = Join-Path $reports 'no-confirm.md'
+    $noConfirmArgs = @{
+        Provider = 'mock'; MockMode = 'success'; Prompt = 'test prompt no-confirm'; Workspace = $workspace; AllowedFile = @('allowed.txt'); ReportPath = $noConfirmReport; ThreadId = $thread; TimeoutSeconds = 5; WakeMaxAttempts = 1; AppServerExecutable = $pwsh; AppServerArgument = (New-AppArgs (Join-Path $testRoot 'no-confirm.log')); DeliveryMode = 'queue'
+    }
+    $attempt = & $dispatch @noConfirmArgs | ConvertFrom-Json
+    $dispatchedWithoutConfirm = $true
+} catch { }
+Assert (-not $dispatchedWithoutConfirm) 'dispatch refuses without confirmation'
 
 $success = Dispatch 'success' 'success'
 $successEvent = Wait-ForEvent $success.done_event_path
@@ -104,6 +154,7 @@ $antigravityArgs = @{
     Provider = 'antigravity'; Prompt = 'Antigravity prompt-text expansion test'; Workspace = $workspace; AllowedFile = @(); ReportPath = $antigravityReport; ThreadId = $thread; TimeoutSeconds = 10; WakeMaxAttempts = 1
     ProviderExecutable = $pwsh; ProviderArgument = @('-NoProfile','-NonInteractive','-File',(Join-Path $scripts 'mock_provider.ps1'),'-RequestText','{prompt_text}','-ReportPath','{report_path}','-Mode','success')
     AppServerExecutable = $pwsh; AppServerArgument = (New-AppArgs (Join-Path $testRoot 'antigravity.log'))
+    ConfirmThreadId = $thread
 }
 $antigravity = & $dispatch @antigravityArgs | ConvertFrom-Json
 $antigravityEvent = Wait-ForEvent $antigravity.done_event_path
