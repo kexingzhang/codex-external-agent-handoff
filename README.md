@@ -64,7 +64,7 @@ loop，让 Antigravity 修复这个问题；Codex 负责最终审查，直到没
     '--prompt-file', '{prompt_file}',
     '--model', 'grok-4.6',
     '--reasoning-effort', 'xhigh',
-    '--max-turns', '10',
+    '--max-turns', '35',
     '--disable-web-search',
     '--no-subagents',
     '--always-approve',

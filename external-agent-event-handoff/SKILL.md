@@ -40,7 +40,7 @@ Run `collect_external_agent.ps1 -EventPath <absolute done.json>`. Do not execute
 & "$HOME\.codex\skills\external-agent-event-handoff\scripts\dispatch_external_agent.ps1" `
   -Provider grok `
   -ProviderExecutable 'C:\Users\<user>\.grok\bin\grok.exe' `
-  -ProviderArgument @('--prompt-file', '{prompt_file}', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', '--max-turns', '10', '--disable-web-search', '--no-subagents', '--always-approve', '--output-format', 'plain') `
+  -ProviderArgument @('--prompt-file', '{prompt_file}', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', '--max-turns', '35', '--disable-web-search', '--no-subagents', '--always-approve', '--output-format', 'plain') `
   -Prompt 'Implement the requested change.' `
   -Workspace 'D:\Project' `
   -AllowedFile 'src\feature.ts' `

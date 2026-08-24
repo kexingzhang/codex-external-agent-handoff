@@ -81,7 +81,13 @@ Assert (-not (Test-Path -LiteralPath $waitLog)) 'wait delivery does not launch A
 
 $failed = Dispatch 'failed' 'failed'
 $failedEvent = Wait-ForEvent $failed.done_event_path
-Assert ($failedEvent.status -eq 'failed') 'nonzero provider status'
+Assert ($failedEvent.status -eq 'complete') 'nonzero exit with valid report is accepted as complete'
+Assert ($failedEvent.exit_code -eq 7) 'nonzero exit code preserved in event for audit'
+Assert ($failedEvent.reason -like '*exited with code 7*') 'nonzero exit reason recorded'
+
+$failedNoReport = Dispatch 'missing-report' 'failed-no-report'
+$failedNoReportEvent = Wait-ForEvent $failedNoReport.done_event_path
+Assert ($failedNoReportEvent.status -eq 'failed') 'nonzero exit with missing report is failed'
 Assert ($failedEvent.wake_state -eq 'sent') 'failed event wakes once'
 
 $timed = Dispatch 'sleep' 'timed-out' 1

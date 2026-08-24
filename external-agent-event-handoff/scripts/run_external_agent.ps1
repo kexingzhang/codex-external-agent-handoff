@@ -39,11 +39,19 @@ try {
         $reason = "provider exceeded timeout_seconds=$($manifest.timeout_seconds)"
     } else {
         $exitCode = $proc.ExitCode
-        if ($exitCode -ne 0) { $status = 'failed'; $reason = "provider exited with code $exitCode" }
-        else {
-            $reportState = Get-ReportState $report
-            if (-not $reportState.valid) { $status = 'failed'; $reason = $reportState.reason }
-            else { $status = 'complete' }
+        $reportState = Get-ReportState $report
+        if ($reportState.valid) {
+            if ($exitCode -eq 0) { $status = 'complete' }
+            else {
+                # Provider finished its deliverable but exited nonzero (e.g., max-turns
+                # reached during cleanup). Report exists and is valid, so accept it.
+                $status = 'complete'
+                $reason = "provider exited with code $exitCode after publishing a valid delivery report"
+            }
+        } else {
+            $status = 'failed'
+            if ($exitCode -ne 0) { $reason = "provider exited with code $exitCode; $($reportState.reason)" }
+            else { $reason = $reportState.reason }
         }
     }
     Write-AtomicText -Path $stdoutPath -Text $stdoutTask.GetAwaiter().GetResult() | Out-Null
